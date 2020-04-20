@@ -1,4 +1,4 @@
-# SFTP Transfer CloudFormation stacks & related resources
+## SFTP Transfer CloudFormation stacks & related resources
 
 AWS Transfer for SFTP is a fully managed service that enables the transfer of files directly into and out of Amazon S3 using the Secure File Transfer Protocol (SFTP)— also known as Secure Shell (SSH) File Transfer Protocol. AWS helps to seamlessly migrate file transfer workflows to AWS Transfer for SFTP—by integrating with existing authentication systems, and providing DNS routing with Amazon Route 53 so nothing changes for customers and partners, or their applications. With data in S3, we can use it with AWS services for processing, analytics, machine learning, and archiving.
 
