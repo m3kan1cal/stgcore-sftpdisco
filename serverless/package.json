@@ -1,0 +1,14 @@
+{
+  "name": "stgcore-disco",
+  "version": "1.0.0",
+  "description": "STG Disco core services for STG Labs.",
+  "dependencies": {},
+  "devDependencies": {
+    "serverless-python-requirements": "^5.1.0"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "mlfowler-stg",
+  "license": "MIT"
+}

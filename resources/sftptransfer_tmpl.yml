@@ -1,0 +1,464 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This template deploys a SFTP server using AWS Transfer for external parties to
+             transfer files securely to business entities. It creates a Lambda-backed API Gateway
+             for use as a custom identity provider in AWS Transfer for SFTP. It authenticates
+             against an entry in AWS Secrets Manager of the format SFTP/username. Additionaly,
+             the secret must hold the key-value pairs for all user properties returned to AWS Transfer.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Account Details
+        Parameters:
+          - AccountSet
+          - Owner
+          - SecurityContact
+      - Label:
+          default: Related Stacks
+        Parameters:
+          - IDPAPIStack
+      - Label:
+          default: Required Tags
+        Parameters:
+          - Environment
+          - Customer
+          - Application
+          - ApplicationVersion
+          - ApplicationRole
+          - InfrastructureVersion
+          - ProjectCostCenter
+          - OperatingCostCenter
+          - Confidentiality
+          - Compliance
+          - AutomateOption
+          - AutomateAt
+
+Parameters:
+  IDPAPIStack:
+    Type: String
+    ConstraintDescription: Must be a valid parent stack name for references within
+                           this template.
+    Description: The parent IDP API Gateway stack name for references within this template.
+
+  # Mandatory tags that will be added to all resources that support tags.
+  # https://aws.amazon.com/answers/account-management/aws-tagging-strategies/
+  AccountSet:
+    Type: String
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: stoic
+    Description: Name of the Account Set to deploy to.
+
+  Environment:
+    Type: String
+    AllowedValues:
+      - sandbox
+      - nonprod
+      - prod
+    Default: nonprod
+    ConstraintDescription: Must be a valid environment.
+    Description: Used to distinguish between sandbox, development, test, and production
+                 infrastructure.
+
+  Customer:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: 'STG'
+    ConstraintDescription: Must be a valid customer name.
+    Description: Used to identify a specific client that a particular group of
+                 resources serves.
+
+  Application:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: 'STGDisco'
+    ConstraintDescription: Must be a valid application and resource prefix.
+    Description: In this capacity, application does not refer to an installed software component,
+                 but rather the overall business application that the resource supports. Also,
+                 used as the resource prefix for other resources.
+
+  ApplicationVersion:
+    Type: String
+    AllowedPattern: '[a-z0-9.]*'
+    Default: '1.0.0'
+    ConstraintDescription: Must be a valid application version.
+    Description: Used to help distinguish between different versions of resources or
+                 applications. Format should be Pattern - '#.#.#'.
+
+  ApplicationRole:
+    Type: String
+    AllowedValues:
+      - Networking
+      - WebServer
+      - MessageBroker
+      - Database
+      - WebUI
+      - DataCache
+    Default: Networking
+    ConstraintDescription: Must be a valid application role.
+    Description: Used to describe the function of a particular resource (e.g. networking,
+                 web server, message broker, database).
+
+  InfrastructureVersion:
+    Type: String
+    AllowedPattern: '[a-z0-9.]*'
+    Default: '1.0.0'
+    ConstraintDescription: Must be a valid infrastructure version.
+    Description: Used to help distinguish between different versions of resources or applications.
+                 Format should be Pattern - '#.#.#'.
+
+  ProjectCostCenter:
+    Type: String
+    MinLength: 9
+    AllowedPattern: '[0-9]*'
+    Default: '9493076548'
+    ConstraintDescription: Must be a valid cost center.
+    Description: Used to identify the cost center or business unit associated with a resource;
+                 typically for cost allocation and tracking.
+
+  OperatingCostCenter:
+    Type: String
+    MinLength: 9
+    AllowedPattern: '[0-9]*'
+    Default: '9493076548'
+    ConstraintDescription: Must be a valid cost center.
+    Description: Used to identify the cost center or business unit associated with a resource;
+                 typically for cost allocation and tracking.
+
+  Owner:
+    Type: String
+    Default: 'fireteamosiris@withstg.com'
+    ConstraintDescription: Must be a valid email address.
+    Description: Used to identify who is responsible for the resource.
+
+  SecurityContact:
+    Type: String
+    Default: 'fireteamosiris@withstg.com'
+    ConstraintDescription: Must be a valid email address.
+    Description: The owner key is used to designate the CBG team associated with the given
+                 AWS resource.
+
+  Confidentiality:
+    Type: String
+    AllowedValues:
+      - Public
+      - Private
+      - Confidential
+      - PII/PHI
+    Default: PII/PHI
+    ConstraintDescription: Must be a valid data-confidentiality level.
+    Description: An identifier for the specific data-confidentiality level a resource supports.
+
+  Compliance:
+    Type: String
+    AllowedValues:
+      - HIPAA
+      - SOX
+      - FIPS
+      - Other
+      - None
+    Default: HIPAA
+    ConstraintDescription: Must be a valid compliance level.
+    Description: An identifier for workloads designed to adhere to specific compliance requirements.
+
+  AutomateOption:
+    Type: String
+    AllowedValues:
+      - OptIn
+      - OptOut
+    Default: OptIn
+    ConstraintDescription: Must be a valid automation level.
+    Description: Used to indicate whether a resource should be automatically included in an
+                 automated activity such as starting, stopping, or resizing instances.
+
+  AutomateAt:
+    Type: String
+    AllowedPattern: '[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]'
+    Default: '9999-12-31 13:37'
+    ConstraintDescription: Must be a valid date timestamp in YYYY-MM-DD HH:MM timestamp format.
+    Description: Used to identify the date or time a resource should be started, stopped,
+                 deleted, or rotated.
+
+Resources:
+  StandardCloudWatchSFTPRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: '/'
+      RoleName: StandardCloudWatchSFTPRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - events.amazonaws.com
+                - transfer.amazonaws.com
+                - vpc-flow-logs.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      Policies:
+        - PolicyName: StandardCloudWatchAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AllowCloudWatchLogGroupManagement
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DescribeLogGroups
+                  - logs:PutRetentionPolicy
+                Resource:
+                  - arn:aws:logs:*:*:log-group:/aws/*/*
+                  - arn:aws:logs:*:*:log-group:*
+
+              - Sid: AllowCloudWatchLogStreamManagement
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                  - logs:GetLogEvents
+                Resource:
+                  - arn:aws:logs:*:*:log-group:/aws/*/*:log-stream:*
+                  - arn:aws:logs:*:*:log-group:*
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-StandardCloudWatchSFTPRole
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  StandardSFTPUsersRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: '/'
+      RoleName: StandardSFTPUsersRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - transfer.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowListingOfUserFolder
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  - !Sub arn:aws:s3:::${AccountSet}-${Environment}-shares
+        - PolicyName: AllowHomeDirObjectAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                Resource:
+                  - !Sub arn:aws:s3:::${AccountSet}-${Environment}-shares/*
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-StandardSFTPUsersRole
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  StandardSFTPIdPRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: '/'
+      RoleName: StandardSFTPIdPRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - transfer.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowInvocationOfAPIGatewayEndpoints
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - execute-api:Invoke
+                Resource: '*'
+        - PolicyName: AllowReadOfAPIGatewayEndpoints
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - apigateway:GET
+                Resource: '*'
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-StandardSFTPIdPRole
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+  SFTPTransferServer1:
+    Type: AWS::Transfer::Server
+    Properties:
+      EndpointType: PUBLIC
+      IdentityProviderType: API_GATEWAY
+      IdentityProviderDetails:
+        Url:
+          Fn::ImportValue:
+            !Sub ${IDPAPIStack}:${Environment}:ServiceEndpointURL
+        InvocationRole: !GetAtt StandardSFTPIdPRole.Arn
+      LoggingRole: !GetAtt StandardCloudWatchSFTPRole.Arn
+      Tags:
+        - Key: ResourceGoup
+          Value: !Sub ${Application}-ResourceGroup
+        - Key: Name
+          Value: !Sub ${Application}-SFTPTransferServer1
+        - Key: Customer
+          Value: !Ref Customer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref Application
+        - Key: ApplicationVersion
+          Value: !Ref ApplicationVersion
+        - Key: ApplicationRole
+          Value: !Ref ApplicationRole
+        - Key: InfrastructureVersion
+          Value: !Ref InfrastructureVersion
+        - Key: ProjectCostCenter
+          Value: !Ref ProjectCostCenter
+        - Key: OperatingCostCenter
+          Value: !Ref OperatingCostCenter
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: SecurityContact
+          Value: !Ref SecurityContact
+        - Key: Confidentiality
+          Value: !Ref Confidentiality
+        - Key: Compliance
+          Value: !Ref Compliance
+        - Key: AutomateOption
+          Value: !Ref AutomateOption
+        - Key: AutomateAt
+          Value: !Ref AutomateAt
+
+Outputs:
+  SFTPTransferServer1:
+    Description: The ID of the SFTP server.
+    Value: !GetAtt SFTPTransferServer1.ServerId
+    Export:
+      Name: !Join [':', [!Ref 'AWS::StackName', !Ref Environment, SFTPTransferServer1]]
+
+  SFTPTransferServer1ARN:
+    Description: The ARN of the SFTP server.
+    Value: !GetAtt SFTPTransferServer1.Arn
+    Export:
+      Name: !Join [':', [!Ref 'AWS::StackName', !Ref Environment, SFTPTransferServer1ARN]]
+
+  SFTPTransferServer1URL:
+    Description: The AWS domain name of the SFTP server.
+    Value:
+      !Sub 'sftp://${SFTPTransferServer1.ServerId}.server.transfer.${AWS::Region}.amazonaws.com'
+    Export:
+      Name: !Join [':', [!Ref 'AWS::StackName', !Ref Environment, SFTPTransferServer1URL]]
